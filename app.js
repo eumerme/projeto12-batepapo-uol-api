@@ -76,15 +76,31 @@ app.post('/participants', async (req, res) => {
 	}
 });
 
-app.get('/messages', (req, res) => {
-	const { user: name } = req.headers;
+app.get('/messages', async (req, res) => {
+	const { user: from } = req.headers;
 	const limit = Number(req.query.limit);
 
-	if (!limit) {
-		res.send('All messages');
+	if (!from) {
+		return res.status(400).send('headers inválida!');
 	}
 
-	res.send('messages');
+	try {
+		const messages = await db
+			.collection('messages')
+			.find({
+				$or: [{ from }, { to: from }, { type: 'message' }, { type: 'status' }],
+			})
+			.toArray();
+
+		if (!limit) {
+			return res.send(messages);
+		}
+
+		return res.send(messages.slice(0, limit));
+	} catch (error) {
+		console.log(error);
+		return res.sendStatus(500);
+	}
 });
 
 app.post('/messages', async (req, res) => {
@@ -110,7 +126,7 @@ app.post('/messages', async (req, res) => {
 			(participant) => participant.name === value.to
 		);
 		if (!fromON || !toON) {
-			return res.status(404).send('Usuário inexistente!');
+			return res.status(400).send('Usuário inexistente!');
 		}
 
 		await db.collection('messages').insertOne({
