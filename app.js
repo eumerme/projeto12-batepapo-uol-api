@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import { MongoClient } from 'mongodb';
+import Joi from 'joi';
+import dayjs from 'dayjs';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -15,20 +17,58 @@ mongoClient.connect().then(() => {
 	db = mongoClient.db('batepapo-uol-api');
 });
 
-app.get('/participants', (req, res) => {
+const schema = {
+	participantsPOST: Joi.object().keys({
+		name: Joi.string().required(),
+	}),
+};
+
+app.get('/participants', async (req, res) => {
 	try {
-		const participants = db.collection('batepapo-uol-api').find().toArray();
-		res.send(participants);
+		const participants = await db.collection('participants').find().toArray();
+		return res.send(participants);
 	} catch (error) {
 		console.log(error);
-		res.sendStatus(500);
+		return res.sendStatus(500);
 	}
 });
 
-app.post('/participants', (req, res) => {
-	const { name } = req.body;
+app.post('/participants', async (req, res) => {
+	const { body } = req;
 
-	res.sendStatus(201);
+	try {
+		const { value, error } = schema.participantsPOST.validate(body);
+		if (error) {
+			const message = error.details.map((data) => data.message).join(',');
+			return res.status(422).send(message);
+		}
+
+		const participants = await db.collection('participants').find().toArray();
+		const nameExists = participants.some(
+			(participant) => participant.name === value.name
+		);
+		if (nameExists) {
+			return res.status(409).send('Nome de usuário já cadastrado!');
+		}
+
+		await db
+			.collection('participants')
+			.insertOne({ ...value, lastStatus: Date.now() });
+
+		const now = dayjs().format('HH:mm:ss');
+		await db.collection('messages').insertOne({
+			from: value.name,
+			to: 'Todos',
+			text: 'entra na sala...',
+			type: 'status',
+			time: now,
+		});
+
+		return res.sendStatus(201);
+	} catch (error) {
+		console.log(error);
+		return res.sendStatus(500);
+	}
 });
 
 app.get('/messages', (req, res) => {
