@@ -21,7 +21,13 @@ const schema = {
 	participantsPOST: Joi.object().keys({
 		name: Joi.string().required(),
 	}),
+	messagesPOST: Joi.object().keys({
+		to: Joi.string().required(),
+		text: Joi.string().required(),
+		type: Joi.string().valid('message', 'private_message').required(),
+	}),
 };
+const time = dayjs().format('HH:mm:ss');
 
 app.get('/participants', async (req, res) => {
 	try {
@@ -55,13 +61,12 @@ app.post('/participants', async (req, res) => {
 			.collection('participants')
 			.insertOne({ ...value, lastStatus: Date.now() });
 
-		const now = dayjs().format('HH:mm:ss');
 		await db.collection('messages').insertOne({
 			from: value.name,
 			to: 'Todos',
 			text: 'entra na sala...',
 			type: 'status',
-			time: now,
+			time,
 		});
 
 		return res.sendStatus(201);
@@ -82,11 +87,45 @@ app.get('/messages', (req, res) => {
 	res.send('messages');
 });
 
-app.post('messages', (req, res) => {
+app.post('/messages', async (req, res) => {
 	const { user: from } = req.headers;
-	const { to, text, type } = req.body;
+	const { body } = req;
 
-	res.sendStatus(201);
+	if (!from) {
+		return res.status(400).send('headers inválida!');
+	}
+
+	try {
+		const { value, error } = schema.messagesPOST.validate(body);
+		if (error) {
+			const message = error.details.map((data) => data.message).join(',');
+			return res.status(422).send(message);
+		}
+
+		const participants = await db.collection('participants').find().toArray();
+		const fromON = participants.some(
+			(participant) => participant.name === from
+		);
+		const toON = participants.some(
+			(participant) => participant.name === value.to
+		);
+		if (!fromON || !toON) {
+			return res.status(404).send('Usuário inexistente!');
+		}
+
+		await db.collection('messages').insertOne({
+			from,
+			to: body.to,
+			text: body.text,
+			type: body.type,
+			time,
+		});
+
+		return res.sendStatus(201);
+	} catch (error) {
+		console.log(error);
+		return res.sendStatus(500);
+	}
 });
 
 app.post('/status', (req, res) => {
