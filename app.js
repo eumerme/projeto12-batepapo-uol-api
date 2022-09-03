@@ -19,47 +19,44 @@ mongoClient.connect().then(() => {
 
 const schema = {
 	participantsPOST: Joi.object().keys({
-		name: Joi.string().required(),
+		name: Joi.string().trim().required(),
 	}),
 	messagesPOST: Joi.object().keys({
-		to: Joi.string().required(),
-		text: Joi.string().required(),
+		to: Joi.string().trim().required(),
+		text: Joi.string().trim().required(),
 		type: Joi.string().valid('message', 'private_message').required(),
 	}),
 };
 const time = dayjs().format('HH:mm:ss');
+const now = Date.now();
 
 app.get('/participants', async (req, res) => {
 	try {
 		const participants = await db.collection('participants').find().toArray();
 		return res.send(participants);
 	} catch (error) {
-		console.log(error);
-		return res.sendStatus(500);
+		return res.status(500).send(error.message);
 	}
 });
 
 app.post('/participants', async (req, res) => {
-	const { body } = req;
+	const { value, error } = schema.participantsPOST.validate(req.body, {
+		abortEarly: false,
+	});
+	if (error) {
+		const message = error.details.map((detail) => detail.message).join(',');
+		return res.status(422).send(message);
+	}
 
 	try {
-		const { value, error } = schema.participantsPOST.validate(body);
-		if (error) {
-			const message = error.details.map((data) => data.message).join(',');
-			return res.status(422).send(message);
-		}
-
-		const participants = await db.collection('participants').find().toArray();
-		const nameExists = participants.some(
-			(participant) => participant.name === value.name
-		);
+		const nameExists = await db.collection('participants').findOne(value);
 		if (nameExists) {
 			return res.status(409).send('Nome de usuário já cadastrado!');
 		}
 
 		await db
 			.collection('participants')
-			.insertOne({ ...value, lastStatus: Date.now() });
+			.insertOne({ ...value, lastStatus: now });
 
 		await db.collection('messages').insertOne({
 			from: value.name,
@@ -70,9 +67,8 @@ app.post('/participants', async (req, res) => {
 		});
 
 		return res.sendStatus(201);
-	} catch (error) {
-		console.log(error);
-		return res.sendStatus(500);
+	} catch (err) {
+		return res.status(500).send(err.message);
 	}
 });
 
@@ -80,11 +76,12 @@ app.get('/messages', async (req, res) => {
 	const { user: from } = req.headers;
 	const limit = Number(req.query.limit);
 
-	if (!from) {
-		return res.status(400).send('headers inválida!');
-	}
-
 	try {
+		const fromON = await db.collection('participants').findOne({ name: from });
+		if (!fromON) {
+			return res.status(404).send('Usuário inexistente!');
+		}
+
 		const messages = await db
 			.collection('messages')
 			.find({
@@ -97,57 +94,90 @@ app.get('/messages', async (req, res) => {
 		}
 
 		return res.send(messages.slice(0, limit));
-	} catch (error) {
-		console.log(error);
-		return res.sendStatus(500);
+	} catch (err) {
+		return res.status(500).send(err.message);
 	}
 });
 
 app.post('/messages', async (req, res) => {
 	const { user: from } = req.headers;
-	const { body } = req;
-
-	if (!from) {
-		return res.status(400).send('headers inválida!');
+	const { value, error } = schema.messagesPOST.validate(req.body, {
+		abortEarly: false,
+	});
+	if (error) {
+		const message = error.details.map((detail) => detail.message).join(',');
+		return res.status(422).send(message);
 	}
 
 	try {
-		const { value, error } = schema.messagesPOST.validate(body);
-		if (error) {
-			const message = error.details.map((data) => data.message).join(',');
-			return res.status(422).send(message);
-		}
-
-		const participants = await db.collection('participants').find().toArray();
-		const fromON = participants.some(
-			(participant) => participant.name === from
-		);
-		const toON = participants.some(
-			(participant) => participant.name === value.to
-		);
-		if (!fromON || !toON) {
-			return res.status(400).send('Usuário inexistente!');
+		const fromON = await db.collection('participants').findOne({ name: from });
+		if (!fromON) {
+			return res.status(404).send('Usuário inexistente!');
 		}
 
 		await db.collection('messages').insertOne({
 			from,
-			to: body.to,
-			text: body.text,
-			type: body.type,
+			...value,
 			time,
 		});
 
 		return res.sendStatus(201);
-	} catch (error) {
-		console.log(error);
-		return res.sendStatus(500);
+	} catch (err) {
+		return res.status(500).send(err.message);
 	}
 });
 
-app.post('/status', (req, res) => {
+app.post('/status', async (req, res) => {
 	const { user: name } = req.headers;
 
-	res.sendStatus(201);
+	try {
+		const participant = await db.collection('participants').findOne({ name });
+		if (!participant) {
+			return res.sendStatus(404);
+		}
+
+		await db
+			.collection('participants')
+			.updateOne({ name }, { $set: { lastStatus: now } });
+
+		return res.sendStatus(201);
+	} catch (err) {
+		return res.status(500).send(err.message);
+	}
 });
 
-app.listen(5000, () => console.log('Listening on 5000'));
+function logOut(participants) {
+	participants.forEach(async (participant) => {
+		if (now - participant.lastStatus > 10000) {
+			const { _id: id } = participant;
+
+			try {
+				await db.collection('participants').deleteOne({ _id: id });
+
+				await db.collection('messages').insertOne({
+					from: participant.name,
+					to: 'Todos',
+					text: 'sai da sala...',
+					type: 'status',
+					time,
+				});
+				return console.log(
+					`${participant.name} has been logged out by the server`
+				);
+			} catch (err) {
+				return console.error(err.message);
+			}
+		}
+	});
+}
+
+setInterval(async () => {
+	try {
+		const participants = await db.collection('participants').find().toArray();
+		return logOut(participants);
+	} catch (err) {
+		return console.error(err.message);
+	}
+}, 15000);
+
+app.listen(5000, () => console.log('Listening on port 5000'));
