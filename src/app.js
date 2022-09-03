@@ -77,9 +77,11 @@ app.get('/messages', async (req, res) => {
 	const limit = Number(req.query.limit);
 
 	try {
-		const fromON = await db.collection('participants').findOne({ name: from });
-		if (!fromON) {
-			return res.status(404).send('Usuário inexistente!');
+		const participant = await db
+			.collection('participants')
+			.findOne({ name: from });
+		if (!participant) {
+			return res.status(422).send('Usuário inválido!');
 		}
 
 		const messages = await db
@@ -110,9 +112,11 @@ app.post('/messages', async (req, res) => {
 	}
 
 	try {
-		const fromON = await db.collection('participants').findOne({ name: from });
-		if (!fromON) {
-			return res.status(404).send('Usuário inexistente!');
+		const participant = await db
+			.collection('participants')
+			.findOne({ name: from });
+		if (!participant) {
+			return res.status(422).send('Usuário inválido!');
 		}
 
 		await db.collection('messages').insertOne({
@@ -122,6 +126,45 @@ app.post('/messages', async (req, res) => {
 		});
 
 		return res.sendStatus(201);
+	} catch (err) {
+		return res.status(500).send(err.message);
+	}
+});
+
+app.put('/messages/:id', async (req, res) => {
+	const { user: from } = req.headers;
+	const { id } = req.params;
+	const { value, error } = schema.messagesPOST.validate(req.body, {
+		abortEarly: false,
+	});
+	if (error) {
+		return res.status(422).send('Usuário inválido!');
+	}
+
+	try {
+		const participant = await db
+			.collection('participants')
+			.findOne({ name: from });
+		if (!participant) {
+			return res.status(422).send('Usuário inválido!');
+		}
+
+		const message = await db
+			.collection('messages')
+			.findOne({ _id: new ObjectId(id) });
+		if (!message) {
+			return res.status(404).send('Mensagem inexistente!');
+		}
+
+		if (message.from !== from) {
+			return res.status(401).send('Usuário inválido!');
+		}
+
+		await db
+			.collection('messages')
+			.updateOne({ _id: new ObjectId(id) }, { $set: value });
+
+		return res.sendStatus(200);
 	} catch (err) {
 		return res.status(500).send(err.message);
 	}
