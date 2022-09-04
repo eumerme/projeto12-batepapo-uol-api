@@ -27,6 +27,7 @@ const schema = {
 		type: Joi.string().valid('message', 'private_message').required(),
 	}),
 };
+
 const time = dayjs().format('HH:mm:ss');
 const now = Date.now();
 
@@ -34,8 +35,8 @@ app.get('/participants', async (req, res) => {
 	try {
 		const participants = await db.collection('participants').find().toArray();
 		return res.send(participants);
-	} catch (error) {
-		return res.status(500).send(error.message);
+	} catch (err) {
+		return res.status(500).send(err.message);
 	}
 });
 
@@ -95,7 +96,7 @@ app.get('/messages', async (req, res) => {
 			return res.send(messages);
 		}
 
-		return res.send(messages.slice(0, limit));
+		return res.send(messages.slice(-limit));
 	} catch (err) {
 		return res.status(500).send(err.message);
 	}
@@ -138,7 +139,8 @@ app.put('/messages/:id', async (req, res) => {
 		abortEarly: false,
 	});
 	if (error) {
-		return res.status(422).send('Usuário inválido!');
+		const message = error.details.map((detail) => detail.message).join(',');
+		return res.status(422).send(message);
 	}
 
 	try {
@@ -153,7 +155,7 @@ app.put('/messages/:id', async (req, res) => {
 			.collection('messages')
 			.findOne({ _id: new ObjectId(id) });
 		if (!message) {
-			return res.status(404).send('Mensagem inexistente!');
+			return res.status(404).send('Mensagem não encontrada!');
 		}
 
 		if (message.from !== from) {
@@ -179,11 +181,11 @@ app.delete('/messages/:id', async (req, res) => {
 			.collection('messages')
 			.findOne({ _id: new ObjectId(id) });
 		if (!message) {
-			return res.sendStatus(404);
+			return res.status(404).send('Mensagem não encontrada!');
 		}
 
 		if (message.from !== name) {
-			return res.sendStatus(401);
+			return res.status(401).send('Usuário inválido!');
 		}
 
 		await db.collection('messages').deleteOne({ _id: new ObjectId(id) });
@@ -215,11 +217,10 @@ app.post('/status', async (req, res) => {
 
 function logOut(participants) {
 	participants.forEach(async (participant) => {
-		const { _id: id } = participant;
-
-		if (now - participant.lastStatus > 10000) {
+		const inactive = now - participant.lastStatus > 10000;
+		if (inactive) {
 			try {
-				await db.collection('participants').deleteOne({ _id: id });
+				await db.collection('participants').deleteOne({ _id: participant._id });
 
 				await db.collection('messages').insertOne({
 					from: participant.name,
