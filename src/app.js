@@ -3,6 +3,7 @@ import cors from 'cors';
 import { MongoClient, ObjectId } from 'mongodb';
 import Joi from 'joi';
 import dayjs from 'dayjs';
+import { stripHtml } from 'string-strip-html';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -19,11 +20,11 @@ mongoClient.connect().then(() => {
 
 const schema = {
 	participantsPOST: Joi.object().keys({
-		name: Joi.string().trim().required(),
+		name: Joi.string().required(),
 	}),
 	messagesPOST: Joi.object().keys({
-		to: Joi.string().trim().required(),
-		text: Joi.string().trim().required(),
+		to: Joi.string().required(),
+		text: Joi.string().required(),
 		type: Joi.string().valid('message', 'private_message').required(),
 	}),
 };
@@ -41,9 +42,15 @@ app.get('/participants', async (req, res) => {
 });
 
 app.post('/participants', async (req, res) => {
-	const { value, error } = schema.participantsPOST.validate(req.body, {
-		abortEarly: false,
-	});
+	const { name: unsanitizedName } = req.body;
+	const { result: name } = stripHtml(unsanitizedName, { trimOnlySpaces: true });
+
+	const { value, error } = schema.participantsPOST.validate(
+		{ name },
+		{
+			abortEarly: false,
+		}
+	);
 	if (error) {
 		const message = error.details.map((detail) => detail.message).join(',');
 		return res.status(422).send(message);
@@ -103,10 +110,24 @@ app.get('/messages', async (req, res) => {
 });
 
 app.post('/messages', async (req, res) => {
-	const { user: from } = req.headers;
-	const { value, error } = schema.messagesPOST.validate(req.body, {
-		abortEarly: false,
-	});
+	const { user: unsanitizedFrom } = req.headers;
+	const { result: from } = stripHtml(unsanitizedFrom, { trimOnlySpaces: true });
+
+	const {
+		to: unsanitizedTo,
+		text: unsanitizedText,
+		type: unsanitizedType,
+	} = req.body;
+	const { result: to } = stripHtml(unsanitizedTo, { trimOnlySpaces: true });
+	const { result: text } = stripHtml(unsanitizedText, { trimOnlySpaces: true });
+	const { result: type } = stripHtml(unsanitizedType, { trimOnlySpaces: true });
+
+	const { value, error } = schema.messagesPOST.validate(
+		{ to, text, type },
+		{
+			abortEarly: false,
+		}
+	);
 	if (error) {
 		const message = error.details.map((detail) => detail.message).join(',');
 		return res.status(422).send(message);
@@ -229,9 +250,6 @@ function logOut(participants) {
 					type: 'status',
 					time,
 				});
-				return console.log(
-					`${participant.name} has been logged out by the server`
-				);
 			} catch (err) {
 				return console.error(err.message);
 			}
